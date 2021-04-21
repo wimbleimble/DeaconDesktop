@@ -3,6 +3,8 @@
 #include <iostream>
 #include <QThread>
 
+constexpr char MainWindow::stateLUT[(int)State::MAX_STATES][64];
+
 MainWindow::MainWindow(QWidget* parent) :
 	QMainWindow{ parent },
 	ui{ new Ui::MainWindow },
@@ -12,19 +14,18 @@ MainWindow::MainWindow(QWidget* parent) :
 	_state{ State::Idle }
 {
 	ui->setupUi(this);
-	if (_serialPorts.size() > 0)
-		_selectedPort->setPort(_serialPorts[ui->selectSerialCombo->currentIndex()] );
-
 	populateSerialPortCombo();
-	
+	updateSelectedPort();
+
+
 	connect(ui->syncButton, &QPushButton::clicked,
-			this, &MainWindow::sync);
+		this, &MainWindow::sync);
 	connect(ui->refreshSerialButton, &QPushButton::clicked,
-			this, &MainWindow::refreshSerial);
+		this, &MainWindow::refreshSerial);
 	connect(_socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
 		this, &MainWindow::socketError);
 	connect(_selectedPort, &QSerialPort::errorOccurred,
-			this, &MainWindow::serialError);
+		this, &MainWindow::serialError);
 }
 
 MainWindow::~MainWindow()
@@ -40,6 +41,12 @@ void MainWindow::populateSerialPortCombo()
 		ui->selectSerialCombo->addItem(port.portName()
 			+ QString(" - ") + port.description());
 
+}
+
+void MainWindow::updateSelectedPort()
+{
+	if (_serialPorts.size() > 0)
+		_selectedPort->setPort(_serialPorts[ui->selectSerialCombo->currentIndex()]);
 }
 
 void MainWindow::refreshSerial()
@@ -79,7 +86,7 @@ void MainWindow::sync()
 	disableUi();
 
 	_socket->open(QUrl("ws://localhost:6969"));
-	
+
 	setState(State::Connect);
 	std::cout << "connecting to server...\n";
 }
@@ -87,22 +94,53 @@ void MainWindow::sync()
 void MainWindow::onConnect()
 {
 	std::cout << "Successfully connected.\n";
+	updateSelectedPort();
+	_selectedPort->open(QIODevice::ReadWrite);
+	_selectedPort->write("sync\n");
+
 	connect(_selectedPort, &QSerialPort::readyRead,
-		this, &MainWindow::retrieveData);
+		this, &MainWindow::serialHandshake);
 
 	connectTimeout(&MainWindow::serialTimeout);
 	_timer.start(1000);
 }
 
+void MainWindow::serialHandshake()
+{
+	if (_selectedPort->canReadLine())
+	{
+		_timer.stop();
+		QString msg{ _selectedPort->readLine() };
+		if (msg.contains("ts:"))
+		{
+			_timeStamp = msg.right(3).toInt();
+			std::cout << "Time Stamp: " << _timeStamp << '\n';
+			disconnect(_selectedPort, &QSerialPort::readyRead,
+				this, &MainWindow::serialHandshake);
+			connect(_selectedPort, &QSerialPort::readyRead,
+				this, &MainWindow::retrieveData);
+		}
+		else
+			setState(State::Idle);
+	}
+}
+
 void MainWindow::retrieveData()
 {
 	_timer.stop();
-	setState(State::SerialSync);
-	std::cout << "Retrieving data from arduino...\n";
 
-	disconnect(_selectedPort, &QSerialPort::readyRead,
-		this, &MainWindow::retrieveData);
-	uploadData(std::vector<Data>(3, { 1234, 1234, QDate() }));
+	if (_selectedPort->canReadLine());
+	{
+		QString msg{ _selectedPort->readLine() };
+		if (msg == "done\n")
+		{
+			std::cout << "done\n";
+			disconnect(_selectedPort, &QSerialPort::readyRead,
+				this, &MainWindow::retrieveData);
+		}
+		else
+			std::cout << msg.toStdString();
+	}
 }
 
 void MainWindow::uploadData(const std::vector<Data>& data)
@@ -140,11 +178,11 @@ void MainWindow::contactCallback(const QString& msg)
 void MainWindow::echo(const QString& msg)
 {
 	std::cout << msg.toStdString() << '\n';
-	
+
 }
 void MainWindow::socketError(QAbstractSocket::SocketError err)
 {
-	std::cout << "socket error: " <<_socket->errorString().toStdString() << '\n';
+	std::cout << "socket error: " << _socket->errorString().toStdString() << '\n';
 	setState(State::Idle);
 }
 
@@ -157,6 +195,9 @@ void MainWindow::serialError(QSerialPort::SerialPortError err)
 void MainWindow::serialTimeout()
 {
 	std::cout << "Unable to communicate with beacon, serial timed out.\n";
+	_selectedPort->close();
+	_timer.stop();
+	disconnectTimeout(&MainWindow::serialTimeout);
 	setState(State::Idle);
 }
 
@@ -164,27 +205,27 @@ void MainWindow::socketTimeout()
 {
 	std::cout << "Unable to communicate with server, timed out.\n";
 	_socket->close();
+	_timer.stop();
+	disconnectTimeout(&MainWindow::socketTimeout);
 	setState(State::Idle);
 }
 
-void MainWindow::connectSocketRead(void (MainWindow::*func)(const QString&))
+void MainWindow::connectSocketRead(void (MainWindow::* func)(const QString&))
 {
 	connect(_socket, &QWebSocket::textMessageReceived, this, func);
 }
 
-void MainWindow::disconnectSocketRead(void (MainWindow::*func)(const QString&))
+void MainWindow::disconnectSocketRead(void (MainWindow::* func)(const QString&))
 {
 	disconnect(_socket, &QWebSocket::textMessageReceived, this, func);
 }
 
-void MainWindow::connectTimeout(void (MainWindow::*func)())
+void MainWindow::connectTimeout(void (MainWindow::* func)())
 {
 	connect(&_timer, &QTimer::timeout, this, func);
 }
 
-void MainWindow::disconnectTimeout(void (MainWindow::*func)())
+void MainWindow::disconnectTimeout(void (MainWindow::* func)())
 {
 	disconnect(&_timer, &QTimer::timeout, this, func);
 }
-
-constexpr char MainWindow::stateLUT[(int)State::MAX_STATES][64];

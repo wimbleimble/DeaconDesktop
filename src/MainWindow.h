@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace Ui {
-class MainWindow;
+	class MainWindow;
 }
 
 class MainWindow : public QMainWindow
@@ -50,7 +50,7 @@ private:
 		int UUID;
 		int RSSI;
 		QDate timestamp;
-		
+
 	};
 
 	Ui::MainWindow* ui;
@@ -59,18 +59,21 @@ private:
 	QSerialPort* _selectedPort;
 	State _state;
 	QTimer _timer;
+	int _timeStamp;
 
 	void populateSerialPortCombo();
 	void refreshSerial();
 	void sync();
 	void setState(State state);
+	void updateSelectedPort();
 
 	//retrieves data from arduino and returns
+	void serialHandshake();
 	void retrieveData();
 
 	//sends data to server
 	void uploadData(const std::vector<Data>& data);
-	
+
 	//asks server to cross reference data and determine if there has been
 	//contact. returns true if yes
 	void checkContact();
@@ -82,10 +85,10 @@ private:
 
 	//function pointers, because i fucking hate myself
 	//there has to be an easier way of doing this????
-	void connectSocketRead(void (MainWindow::*func)(const QString&));
-	void disconnectSocketRead(void (MainWindow::*func)(const QString&));
-	void connectTimeout(void (MainWindow::*func)());
-	void disconnectTimeout(void (MainWindow::*func)());
+	void connectSocketRead(void (MainWindow::* func)(const QString&));
+	void disconnectSocketRead(void (MainWindow::* func)(const QString&));
+	void connectTimeout(void (MainWindow::* func)());
+	void disconnectTimeout(void (MainWindow::* func)());
 
 	void socketError(QAbstractSocket::SocketError err);
 	void serialError(QSerialPort::SerialPortError err);
@@ -93,7 +96,7 @@ private:
 	void socketTimeout();
 	void echo(const QString& msg);
 
-	
+
 };
 
 #endif // MAINWINDOW_H
