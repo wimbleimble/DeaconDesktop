@@ -29,6 +29,9 @@ signals:
 
 private:
 
+	static constexpr int _serverTimeout{ 5000 };
+	static constexpr int _serialTimeout{ 1000 };
+
 	struct Data
 	{
 		int UUID;
@@ -41,7 +44,8 @@ private:
 	QWebSocket* _socket;
 	QList<QSerialPortInfo> _serialPorts;
 	QSerialPort* _selectedPort;
-	QTimer _timer;
+	QTimer _serverTimer;
+	QTimer _serialTimer;
 	int _timeStamp;
 
 	void populateSerialPortCombo();
@@ -55,15 +59,18 @@ private:
 
 	void enterCheckContact();
 	void checkContact();
+	void requestUUID();			// im so sorry
 	void receiveContact(const QString& msg);
 	void exitCheckContact();
 
 	void enterAlertContact();
+	void requestUUIDAgain();	// i really am so so sorry
 	void alertContact();
 	void exitAlertContact();
 
 	void enterTransfer();
-	void serialHandshake();
+	void retrieveTimestamp();
+	void retrieveUUID();		// im going to hell for this
 	void retrieveData();
 	void exitTransfer();
 
@@ -74,8 +81,6 @@ private:
 
 	void socketError(QAbstractSocket::SocketError err);
 	void serialError(QSerialPort::SerialPortError err);
-	void serialTimeout();
-	void socketTimeout();
 };
 
 #endif // MAINWINDOW_H

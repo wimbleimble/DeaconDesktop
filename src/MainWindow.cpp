@@ -10,7 +10,8 @@ MainWindow::MainWindow(QWidget* parent) :
 	_stateMachine{ new QStateMachine() },
 	_socket{ new QWebSocket() },
 	_serialPorts{ QSerialPortInfo::availablePorts() },
-	_selectedPort{ new QSerialPort() }
+	_selectedPort{ new QSerialPort() },
+	_serverTimer{}, _serialTimer{}
 {
 	ui->setupUi(this);
 	populateSerialPortCombo();
@@ -18,21 +19,26 @@ MainWindow::MainWindow(QWidget* parent) :
 
 	QState* idle{ new QState() };
 	QState* serverConnect{ new QState() };
-	QState* serverTimeout{ new QState() };
 	QState* transfer{ new QState() };
-	QState* transferTimeout{ new QState() };
 	QState* checkContact{ new QState() };
 	QState* alertContact{ new QState() };
+
+	QState* serverTimeout{ new QState() };
+	QState* serialTimeout{ new QState() };
 
 	idle->addTransition(ui->syncButton, &QPushButton::clicked, serverConnect);
 	serverConnect->addTransition(_socket, &QWebSocket::connected, transfer);
 	transfer->addTransition(this, &MainWindow::goHome, idle);
 
-	serverConnect->addTransition(&_timer, &QTimer::timeout, serverTimeout);
-	transfer->addTransition(&_timer, &QTimer::timeout, transferTimeout);
+	serverConnect->addTransition(&_serverTimer, &QTimer::timeout, serverTimeout);
+	checkContact->addTransition(&_serverTimer, &QTimer::timeout, serverTimeout);
+	alertContact->addTransition(&_serverTimer, &QTimer::timeout, serverTimeout);
+	transfer->addTransition(&_serialTimer, &QTimer::timeout, serialTimeout);
+	checkContact->addTransition(&_serialTimer, &QTimer::timeout, serialTimeout);
+	alertContact->addTransition(&_serialTimer, &QTimer::timeout, serialTimeout);
 
 	serverTimeout->addTransition(this, &MainWindow::goHome, idle);
-	transferTimeout->addTransition(this, &MainWindow::goHome, idle);
+	serialTimeout->addTransition(this, &MainWindow::goHome, idle);
 
 	idle->addTransition(ui->checkContactButton, &QPushButton::clicked,
 		checkContact);
@@ -61,24 +67,24 @@ MainWindow::MainWindow(QWidget* parent) :
 	connect(transfer, &QState::entered, this, &MainWindow::enterTransfer);
 	connect(transfer, &QState::exited, this, &MainWindow::exitTransfer);
 
-	connect(serverTimeout, &QState::entered,
-		this, [this]() {timeout(0);});
-	connect(transferTimeout, &QState::entered,
-		this, [this]() {timeout(1);});
-
 	connect(checkContact, &QState::entered, this, &MainWindow::enterCheckContact);
 	connect(checkContact, &QState::exited, this, &MainWindow::exitCheckContact);
 
 	connect(alertContact, &QState::entered, this, &MainWindow::enterAlertContact);
 	connect(alertContact, &QState::exited, this, &MainWindow::exitAlertContact);
 
+	connect(serverTimeout, &QState::entered,
+		this, [this]() {timeout(0);});
+	connect(serialTimeout, &QState::entered,
+		this, [this]() {timeout(1);});
+
 	_stateMachine->addState(idle);
 	_stateMachine->addState(serverConnect);
-	_stateMachine->addState(serverTimeout);
 	_stateMachine->addState(transfer);
-	_stateMachine->addState(transferTimeout);
 	_stateMachine->addState(checkContact);
 	_stateMachine->addState(alertContact);
+	_stateMachine->addState(serialTimeout);
+	_stateMachine->addState(serverTimeout);
 	_stateMachine->setInitialState(idle);
 	_stateMachine->start();
 
@@ -140,42 +146,56 @@ void MainWindow::enableUi()
 void MainWindow::enterServerConnect()
 {
 	_socket->open(_url);
-	std::cout << "connecting to server...\n";
-	_timer.start(5000);
+	_serverTimer.start(_serverTimeout);
 	ui->progressBar->setValue(1);
 }
 
 void MainWindow::exitServerConnect()
 {
-	std::cout << "Successfully connected.\n";
-	_timer.stop();
+	_serverTimer.stop();
 }
 
 void MainWindow::enterTransfer()
 {
-	ui->progressBar->setValue(2);
 	updateSelectedPort();
 	_selectedPort->open(QIODevice::ReadWrite);
 	_selectedPort->write("sync\n");
 
 	connect(_selectedPort, &QSerialPort::readyRead,
-		this, &MainWindow::serialHandshake);
+		this, &MainWindow::retrieveTimestamp);
 
-	_timer.start(1000);
+	_serialTimer.start(_serialTimeout);
 }
 
-void MainWindow::serialHandshake()
+void MainWindow::retrieveTimestamp()
 {
 	if (_selectedPort->canReadLine())
 	{
-		_timer.stop();
+		ui->progressBar->setValue(2);
+		_serialTimer.stop();
 		QString msg{ _selectedPort->readLine() };
 		if (msg.contains("ts:"))
 		{
-			_timeStamp = msg.right(3).toInt();
-			std::cout << "Time Stamp: " << _timeStamp << '\n';
+			_timeStamp = msg.mid(3).toInt();
 			disconnect(_selectedPort, &QSerialPort::readyRead,
-				this, &MainWindow::serialHandshake);
+				this, &MainWindow::retrieveTimestamp);
+			connect(_selectedPort, &QSerialPort::readyRead,
+				this, &MainWindow::retrieveUUID);
+		}
+	}
+}
+
+void MainWindow::retrieveUUID()
+{
+	if (_selectedPort->canReadLine())
+	{
+		ui->progressBar->setValue(3);
+		QString msg{ _selectedPort->readLine() };
+		if (msg.contains("uuid:"))
+		{
+			_socket->sendTextMessage(msg);
+			disconnect(_selectedPort, &QSerialPort::readyRead,
+				this, &MainWindow::retrieveUUID);
 			connect(_selectedPort, &QSerialPort::readyRead,
 				this, &MainWindow::retrieveData);
 		}
@@ -184,14 +204,13 @@ void MainWindow::serialHandshake()
 
 void MainWindow::retrieveData()
 {
-	_timer.stop();
-
 	if (_selectedPort->canReadLine());
 	{
+		ui->progressBar->setValue(4);
 		QString msg{ _selectedPort->readLine() };
 		if (msg.contains("done"))
 		{
-			std::cout << "done\n";
+			ui->progressBar->setValue(5);
 			_socket->sendTextMessage("done\n");
 			emit goHome();
 		}
@@ -206,24 +225,45 @@ void MainWindow::exitTransfer()
 		this, &MainWindow::retrieveData);
 	_socket->close();
 	_selectedPort->close();
-	_timer.stop();
+	_serialTimer.stop();
 }
 
 void MainWindow::enterCheckContact()
 {
 	_socket->open(_url);
-	_timer.start(5000);
+	_serverTimer.start(_serverTimeout);
 	connect(_socket, &QWebSocket::connected,
+		this, &MainWindow::requestUUID);
+}
+
+void MainWindow::requestUUID()
+{
+	_serverTimer.stop();
+	disconnect(_socket, &QWebSocket::connected,
+		this, &MainWindow::requestUUID);
+	updateSelectedPort();
+	_selectedPort->open(QIODevice::ReadWrite);
+	_selectedPort->write("uuid\n");
+	_serialTimer.start(_serialTimeout);
+	connect(_selectedPort, &QSerialPort::readyRead,
 		this, &MainWindow::checkContact);
 }
 
 void MainWindow::checkContact()
 {
-	_timer.stop();
-	connect(_socket, &QWebSocket::textMessageReceived,
-		this, &MainWindow::receiveContact);
-	_socket->sendTextMessage("chk\n");
-
+	if (_selectedPort->canReadLine())
+	{
+		QString msg{ _selectedPort->readLine() };
+		if (msg.contains("uuid:"))
+		{
+			_serialTimer.stop();
+			disconnect(_selectedPort, &QSerialPort::readyRead,
+				this, &MainWindow::checkContact);
+			_socket->sendTextMessage("chk:" + msg.mid(5));
+			connect(_socket, &QWebSocket::textMessageReceived,
+				this, &MainWindow::receiveContact);
+		}
+	}
 }
 
 void MainWindow::receiveContact(const QString& msg)
@@ -255,11 +295,15 @@ void MainWindow::receiveContact(const QString& msg)
 void MainWindow::exitCheckContact()
 {
 	_socket->close();
-	_timer.stop();
+	_selectedPort->close();
+	_serialTimer.stop();
+	_serverTimer.stop();
 	disconnect(_socket, &QWebSocket::connected,
+		this, &MainWindow::requestUUID);
+	disconnect(_selectedPort, &QSerialPort::readyRead,
 		this, &MainWindow::checkContact);
 	disconnect(_socket, &QWebSocket::textMessageReceived,
-		this, &MainWindow::checkContact);
+		this, &MainWindow::receiveContact);
 }
 
 void MainWindow::enterAlertContact()
@@ -274,9 +318,9 @@ void MainWindow::enterAlertContact()
 	{
 	case QMessageBox::Yes:
 		_socket->open(_url);
-		_timer.start(5000);
+		_serverTimer.start(_serverTimeout);
 		connect(_socket, &QWebSocket::connected,
-			this, &MainWindow::alertContact);
+			this, &MainWindow::requestUUIDAgain);
 		break;
 	case QMessageBox::No:
 		emit goHome();
@@ -284,22 +328,47 @@ void MainWindow::enterAlertContact()
 	}
 }
 
+void MainWindow::requestUUIDAgain()
+{
+	_serverTimer.stop();
+	disconnect(_socket, &QWebSocket::connected,
+		this, &MainWindow::requestUUIDAgain);
+	updateSelectedPort();
+	_selectedPort->open(QIODevice::ReadWrite);
+	_selectedPort->write("uuid\n");
+	_serialTimer.start(_serialTimeout);
+	connect(_selectedPort, &QSerialPort::readyRead,
+		this, &MainWindow::alertContact);
+}
+
+void MainWindow::alertContact()
+{
+	if (_selectedPort->canReadLine())
+	{
+		QString msg{ _selectedPort->readLine() };
+		if (msg.contains("uuid:"))
+		{
+			_serialTimer.stop();
+			disconnect(_selectedPort, &QSerialPort::readyRead,
+				this, &MainWindow::alertContact);
+			_socket->sendTextMessage("uhoh:" + msg.mid(5));
+			emit goHome();
+		}
+	}
+}
+
 void MainWindow::exitAlertContact()
 {
 	_socket->close();
-	_timer.stop();
+	_selectedPort->close();
+	_serverTimer.stop();
+	_serialTimer.stop();
 	disconnect(_socket, &QWebSocket::connected,
 		this, &MainWindow::checkContact);
 	disconnect(_socket, &QWebSocket::connected,
 		this, &MainWindow::alertContact);
 }
 
-void MainWindow::alertContact()
-{
-	_socket->sendTextMessage("uhoh\n");
-	_timer.stop();
-	emit goHome();
-}
 
 void MainWindow::timeout(int type)
 {
@@ -330,19 +399,6 @@ void MainWindow::socketError(QAbstractSocket::SocketError err)
 
 void MainWindow::serialError(QSerialPort::SerialPortError err)
 {
-	std::cout << "Serial error: " << _selectedPort->errorString().toStdString() << '\n';
-}
-
-void MainWindow::serialTimeout()
-{
-	std::cout << "Unable to communicate with beacon, serial timed out.\n";
-	_selectedPort->close();
-	_timer.stop();
-}
-
-void MainWindow::socketTimeout()
-{
-	std::cout << "Unable to communicate with server, timed out.\n";
-	_socket->close();
-	_timer.stop();
+	if (_selectedPort->errorString() != "No error")
+		std::cout << "Serial error: " << _selectedPort->errorString().toStdString() << '\n';
 }
