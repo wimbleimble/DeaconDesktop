@@ -7,6 +7,7 @@
 #include <QDate>
 #include <QWebSocket>
 #include <QTimer>
+#include <QStateMachine>
 #include <string>
 #include <vector>
 
@@ -22,81 +23,59 @@ public:
 	explicit MainWindow(QWidget* parent = nullptr);
 	~MainWindow();
 
-private:
-	enum class State
-	{
-		Idle,
-		Connect,
-		SerialSync,
-		WebSync,
-		Contact,
-		ContactTrue,
-		ContactFalse,
-		MAX_STATES
-	};
+signals:
+	void transferComplete();
+	void goHome();
 
-	static constexpr char stateLUT[(int)State::MAX_STATES][64]{
-		"Select Device and Sync...",
-		"Connecting to sync server...",
-		"Syncing with device...",
-		"Uploading data...",
-		"Analysing contact...",
-		"You got the virus :(.",
-		"You're safe.... FOR NOW >:)"
-	};
+private:
 
 	struct Data
 	{
 		int UUID;
 		int RSSI;
 		QDate timestamp;
-
 	};
-
+	const QUrl _url{ "ws://localhost:6969" };
 	Ui::MainWindow* ui;
+	QStateMachine* _stateMachine;
 	QWebSocket* _socket;
 	QList<QSerialPortInfo> _serialPorts;
 	QSerialPort* _selectedPort;
-	State _state;
 	QTimer _timer;
 	int _timeStamp;
 
 	void populateSerialPortCombo();
 	void refreshSerial();
-	void sync();
-	void setState(State state);
-	void updateSelectedPort();
 
-	//retrieves data from arduino and returns
-	void serialHandshake();
-	void retrieveData();
-
-	//sends data to server
-	void uploadData(const std::vector<Data>& data);
-
-	//asks server to cross reference data and determine if there has been
-	//contact. returns true if yes
-	void checkContact();
 	void disableUi();
 	void enableUi();
 
-	void onConnect();
-	void contactCallback(const QString& msg);
+	void enterServerConnect();
+	void exitServerConnect();
 
-	//function pointers, because i fucking hate myself
-	//there has to be an easier way of doing this????
-	void connectSocketRead(void (MainWindow::* func)(const QString&));
-	void disconnectSocketRead(void (MainWindow::* func)(const QString&));
-	void connectTimeout(void (MainWindow::* func)());
-	void disconnectTimeout(void (MainWindow::* func)());
+	void enterCheckContact();
+	void checkContact();
+	void receiveContact(const QString& msg);
+	void exitCheckContact();
+
+	void enterAlertContact();
+	void alertContact();
+	void exitAlertContact();
+
+	void enterTransfer();
+	void serialHandshake();
+	void retrieveData();
+	void exitTransfer();
+
+	void updateSelectedPort();
+
+
+	void timeout(int type);
 
 	void socketError(QAbstractSocket::SocketError err);
 	void serialError(QSerialPort::SerialPortError err);
 	void serialTimeout();
 	void socketTimeout();
-	void echo(const QString& msg);
-
-
 };
 
 #endif // MAINWINDOW_H

@@ -61,15 +61,32 @@
     </item>
     <item>
      <widget class="QProgressBar" name="progressBar">
+      <property name="maximum">
+       <number>2</number>
+      </property>
       <property name="value">
-       <number>24</number>
+       <number>0</number>
       </property>
      </widget>
     </item>
     <item>
      <widget class="QPushButton" name="syncButton">
       <property name="text">
-       <string>Sync</string>
+       <string>Sync Device</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QPushButton" name="checkContactButton">
+      <property name="text">
+       <string>Check for Contact</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QPushButton" name="notifyContactButton">
+      <property name="text">
+       <string>I have tested positive!</string>
       </property>
      </widget>
     </item>
