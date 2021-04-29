@@ -3,6 +3,7 @@
 #include <iostream>
 #include <QThread>
 #include <QMessageBox>
+#include <QDateTime>
 
 MainWindow::MainWindow(QWidget* parent) :
 	QMainWindow{ parent },
@@ -204,7 +205,7 @@ void MainWindow::retrieveUUID()
 
 void MainWindow::retrieveData()
 {
-	if (_selectedPort->canReadLine());
+	if (_selectedPort->canReadLine())
 	{
 		ui->progressBar->setValue(4);
 		QString msg{ _selectedPort->readLine() };
@@ -215,7 +216,16 @@ void MainWindow::retrieveData()
 			emit goHome();
 		}
 		else
-			_socket->sendTextMessage(msg);
+		{
+			QStringList items{ msg.split(',') };
+			if (items.size() == 3)
+			{
+				QDateTime ts{ QDateTime::currentDateTimeUtc() };
+				ts = ts.addSecs(items[0].toInt() - _timeStamp);
+				_socket->sendTextMessage(ts.toString("yyyy-MM-ddThh:mm:ssZ"));
+				_socket->sendTextMessage(',' + items[1] + ',' + items[2]);
+			}
+		}
 	}
 }
 

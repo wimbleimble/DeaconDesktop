@@ -30,7 +30,7 @@ signals:
 private:
 
 	static constexpr int _serverTimeout{ 5000 };
-	static constexpr int _serialTimeout{ 1000 };
+	static constexpr int _serialTimeout{ 20000 };
 
 	struct Data
 	{
